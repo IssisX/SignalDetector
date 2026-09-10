@@ -97,11 +97,11 @@ and Fold layout behavior.
 - `MainActivity.java` - navigation, permissions, lifecycle, actions.
 
 No third-party runtime library is needed in the application.
-# Analyst workstation update (0.2.0)
+# Analyst workstation update (0.3.0)
 
 The native Analyst screen is now the default entry point. It adds a
-compact Wi-Fi/BLE list, identity-keyed multi-selection, a persisted
-list/inspector splitter, source timestamps, retained RSSI history,
+full-height Wi-Fi/BLE grid, identity-keyed multi-selection, a persisted
+wide-screen list/inspector splitter, bounded portrait inspector, source timestamps, retained RSSI history,
 search, radio/band filters, sort, watch filtering, operator notes and
 explicit operator links. Discover, Hunt, Sessions and Library remain.
 
@@ -119,20 +119,23 @@ they never enter the live radio repository. Importing a second capture
 produces a latest-field capture diff. Imported claims are not verified
 measurements. The existing Sessions export remains available separately.
 
-Channel plots are observations, not spectrum-analyzer measurements.
+Spectrum, occupancy, cross-link, event, and diff analysis are full workspaces rather
+than height-stealing drawers. Channel plots are observations, not spectrum-analyzer measurements.
 The heatmap bins observations into 10-second cells over five minutes.
-Overlap is a primary-frequency proximity heuristic, not a measurement
-of interference or airtime. Stale observations are not proof of departure.
+Overlap uses Android's reported nominal channel width plus primary frequency;
+it remains DERIVED and is not a measurement of interference or airtime.
+Temporal profiles feed the footprint model, and both feed prioritized watch events.
+Stale observations are not proof of departure.
 Temporal coincidence is labeled HYPOTHESIS and never establishes identity.
 
 Remaining product scope: complete HE/EHT decoding and BSS color,
-beacon interval/subtype evidence, width-aware interference modeling,
-vendor/rotation clustering, a dedicated left rail, named multi-view
-management, durable change-event archive and complete session-diff UI.
+beacon interval/subtype evidence, vendor/rotation clustering, named multi-view
+management, and a durable change-event archive.
 Wi-Fi STA and Bluetooth connection inventory are explicitly unavailable
 in the current passive discovery data path. No synthetic radio generator
 is shipped; instrumentation fixtures are imported with a synthetic label.
 
-CI runs the real Activity on an API 35 emulator at 1280x720. Its checks
+CI runs the real Activity on an API 35 emulator at 1280x720 and exercises
+both landscape and portrait workstation layouts. Its checks
 do not establish physical Fold6 scanning, OEM throttling, or usability
 in every fold/orientation. Device testing remains required.

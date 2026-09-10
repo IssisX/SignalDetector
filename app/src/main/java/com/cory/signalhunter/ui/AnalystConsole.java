@@ -39,15 +39,17 @@ public final class AnalystConsole extends LinearLayout {
     private final TextView inspector, summary;
     private final TraceView trace;
     private final LinearLayout body, listPane, details;
-    private LinearLayout drawer;
+    private final FrameLayout stage;
+    private final LinearLayout analysisPane;
     private final TextView output;
     private final Spectrum spectrum;
-    private String layer, order, focus = "", drawerMode = "Events";
+    private String layer, order, focus = "", drawerMode = "Observations";
     private boolean replayMode, watchOnly;
     private JSONObject replayOperator = new JSONObject();
     private String importedPath = "UNKNOWN";
     private String band = "All bands";
     private String comparison = "Import a second capture to compare.";
+    private AdvancedAnalysis.Snapshot analysis;
     private final boolean wide;
 
     public AnalystConsole(Activity activity, Repository repository,
@@ -61,10 +63,35 @@ public final class AnalystConsole extends LinearLayout {
         wide = getResources().getConfiguration().screenWidthDp >= 600;
         setOrientation(VERTICAL);
         setBackgroundColor(Palette.BG);
-        query = Ui.input(host, "Search IDs, names, protocol fields",
+        LinearLayout workspaceBar = Ui.row(host);
+        Ui.pad(host, workspaceBar, 6, 5, 6, 5);
+        for (String name : new String[]{"WI-FI BSS", "BLE ADV",
+                "CROSS-LINK", "SPECTRUM", "OCCUPANCY", "EVENTS", "DIFF"}) {
+            button(workspaceBar, name, () -> {
+                if (name.equals("WI-FI BSS")) { layer="Wi-Fi"; showWorkspace("Observations"); }
+                else if (name.equals("BLE ADV")) { layer="BLE"; showWorkspace("Observations"); }
+                else showWorkspace(name.equals("CROSS-LINK") ? "Links" :
+                    name.substring(0,1)+name.substring(1).toLowerCase(Locale.ROOT));
+            });
+        }
+        HorizontalScrollView workspaceScroll=new HorizontalScrollView(host);
+        workspaceScroll.setHorizontalScrollBarEnabled(false);
+        workspaceScroll.addView(workspaceBar);
+        addView(workspaceScroll,new LayoutParams(-1,Ui.dp(host,44)));
+
+        LinearLayout command=Ui.row(host);
+        Ui.pad(host,command,6,2,6,3);
+        query = Ui.input(host, "Search identifiers, names, IEs",
             prefs.getString("query", ""));
         query.setTextSize(12);
-        addView(query, new LayoutParams(-1, Ui.dp(host, 40)));
+        command.addView(query,new LayoutParams(0,Ui.dp(host,38),1));
+        command.addView(Ui.spaceWidth(host,6));
+        TextView scope=Ui.button(host,"SCOPE",false,v->scopeMenu());
+        compact(scope); command.addView(scope);
+        command.addView(Ui.spaceWidth(host,6));
+        TextView actions=Ui.button(host,"ACTIONS",true,v->actionMenu());
+        compact(actions); command.addView(actions);
+        addView(command,new LayoutParams(-1,Ui.dp(host,43)));
         query.addTextChangedListener(new TextWatcher() {
             public void beforeTextChanged(CharSequence s,int a,int c,int f){}
             public void onTextChanged(CharSequence s,int a,int b,int c){
@@ -72,64 +99,10 @@ public final class AnalystConsole extends LinearLayout {
             }
             public void afterTextChanged(Editable e){}
         });
-        LinearLayout tools = Ui.row(host);
-        for (String name : new String[]{"Wi-Fi", "BLE", "All",
-                "STA", "BT Conn"}) {
-            button(tools, name, () -> { layer = name; refresh(); });
-        }
-        button(tools, "Sort", () -> new AlertDialog.Builder(host)
-            .setItems(new String[]{"RSSI", "Name", "Recent", "Channel"},
-                (d, i) -> {
-                    order = new String[]{"RSSI", "Name", "Recent",
-                        "Channel"}[i]; refresh();
-                }).show());
-        button(tools, "Watch", () -> {
-            for (String key : selected) {
-                if (!watches.remove(key)) watches.add(key);
-            }
-            prefs.edit().putStringSet("watches", watches).apply();
-            refresh();
-        });
-        button(tools, "Watch only", () -> {
-            watchOnly = !watchOnly; refresh();
-        });
-        button(tools, "Copy", () -> copy(export()));
-        button(tools, "Export", () -> files.exportJson(export()));
-        button(tools, "Import", files::importJson);
-        button(tools, "Live", () -> { replayMode = false; refresh(); });
-        button(tools, "Save view", () -> {
-            prefs.edit().putString("layer", layer)
-                .putString("order", order)
-                .putString("query", query.getText().toString()).apply();
-            Toast.makeText(host, "View saved", Toast.LENGTH_SHORT).show();
-        });
-        button(tools, "Restore view", () -> {
-            layer = prefs.getString("layer", "Wi-Fi");
-            order = prefs.getString("order", "RSSI");
-            query.setText(prefs.getString("query", ""));
-            refresh();
-        });
-        button(tools, "Notes", this::notes);
-        button(tools, "Session note", () -> {
-            EditText note=Ui.input(host,"Capture note",
-                operator("note:session"));
-            note.setSingleLine(false);
-            new AlertDialog.Builder(host).setTitle("Operator capture note")
-                .setView(note).setPositiveButton("Save", (d,w) ->
-                    operatorPut("note:session",note.getText().toString()))
-                .setNegativeButton("Cancel",null).show();
-        });
-        button(tools, "Band", () -> {
-            String[] bands={"All bands","2.4 GHz","5 GHz","6 GHz"};
-            new AlertDialog.Builder(host).setItems(bands,(d,i) -> {
-                band=bands[i]; refresh();
-            }).show();
-        });
-        button(tools, "Link", this::link);
-        HorizontalScrollView scroller = new HorizontalScrollView(host);
-        scroller.addView(tools); addView(scroller);
         summary = Ui.mono(host, "", 10, Palette.ACCENT);
-        addView(summary);
+        summary.setSingleLine(true);
+        Ui.pad(host,summary,8,1,8,3);
+        addView(summary,new LayoutParams(-1,Ui.dp(host,25)));
         body = Ui.column(host);
         body.setOrientation(wide ? HORIZONTAL : VERTICAL);
         listPane = Ui.column(host);
@@ -147,23 +120,29 @@ public final class AnalystConsole extends LinearLayout {
             refresh();
         });
         listPane.addView(grid, new LayoutParams(-1, 0, 1));
-        float ratio = prefs.getFloat("split", .68f);
+        float ratio = prefs.getFloat("split", wide ? .70f : .74f);
         body.addView(listPane, wide ? new LayoutParams(0, -1, ratio)
-            : new LayoutParams(-1, 0, ratio));
+            : new LayoutParams(-1, 0, 1));
         View splitter = new View(host);
         splitter.setBackgroundColor(Palette.LINE);
-        body.addView(splitter, wide ?
-            new LayoutParams(Ui.dp(host, 12), -1) :
-            new LayoutParams(-1, Ui.dp(host, 12)));
+        if (wide) body.addView(splitter,
+            new LayoutParams(Ui.dp(host, 8), -1));
         details = Ui.column(host);
+        LinearLayout inspectorTabs=Ui.row(host);
+        for(String name:new String[]{"SUMMARY","PROTOCOL","SERIES","LINKS","NOTES"})
+            button(inspectorTabs,name,()->{ inspectMode=name; inspect(); });
+        HorizontalScrollView inspectorScroll=new HorizontalScrollView(host);
+        inspectorScroll.setHorizontalScrollBarEnabled(false);
+        inspectorScroll.addView(inspectorTabs);
+        details.addView(inspectorScroll,new LayoutParams(-1,Ui.dp(host,38)));
         trace = new TraceView(host);
-        details.addView(trace, new LayoutParams(-1, Ui.dp(host, 90)));
+        details.addView(trace, new LayoutParams(-1, Ui.dp(host, wide?96:62)));
         inspector = Ui.mono(host, "Select an observation", 11, Palette.TEXT);
         inspector.setTextIsSelectable(true);
         details.addView(Ui.scroll(host, inspector),
             new LayoutParams(-1, 0, 1));
         body.addView(details, wide ? new LayoutParams(0, -1, 1-ratio)
-            : new LayoutParams(-1, 0, 1-ratio));
+            : new LayoutParams(-1, Ui.dp(host, 190)));
         splitter.setOnTouchListener((v, e) -> {
             if (e.getAction() == MotionEvent.ACTION_MOVE) {
                 int[] loc = new int[2]; body.getLocationOnScreen(loc);
@@ -177,33 +156,33 @@ public final class AnalystConsole extends LinearLayout {
             }
             return true;
         });
-        addView(body, new LayoutParams(-1, 0, 1));
-        LinearLayout tabs = Ui.row(host);
-        for (String name : new String[]{"Events", "Spectrum",
-                "Occupancy", "Overlap", "Links", "Diff"}) {
-            button(tabs, name, () -> {
-                drawerMode = name; drawer.setVisibility(VISIBLE);
-                prefs.edit().putBoolean("drawer", true).apply();
-                refresh();
-            });
-        }
-        button(tabs, "Drawer", () -> {
-            drawer.setVisibility(drawer.getVisibility() == VISIBLE ?
-                GONE : VISIBLE);
-            prefs.edit().putBoolean("drawer",
-                drawer.getVisibility() == VISIBLE).apply();
-        });
-        HorizontalScrollView tabScroll = new HorizontalScrollView(host);
-        tabScroll.addView(tabs); addView(tabScroll);
-        drawer = Ui.column(host);
+        analysisPane = Ui.column(host);
         output = Ui.mono(host, "", 10, Palette.MUTED);
         output.setTextIsSelectable(true);
         spectrum = new Spectrum(host);
-        drawer.addView(spectrum, new LayoutParams(-1, Ui.dp(host, 100)));
-        drawer.addView(Ui.scroll(host, output), new LayoutParams(-1, 0, 1));
-        addView(drawer, new LayoutParams(-1, Ui.dp(host, 90)));
-        drawer.setVisibility(prefs.getBoolean("drawer", false) ?
-            VISIBLE : GONE);
+        analysisPane.addView(spectrum,new LayoutParams(-1,0,3));
+        analysisPane.addView(Ui.scroll(host,output),new LayoutParams(-1,0,2));
+        stage=new FrameLayout(host);
+        stage.addView(body,new FrameLayout.LayoutParams(-1,-1));
+        stage.addView(analysisPane,new FrameLayout.LayoutParams(-1,-1));
+        addView(stage,new LayoutParams(-1,0,1));
+        showWorkspace(prefs.getString("workspace","Observations"));
+        refresh();
+    }
+
+    private String inspectMode="SUMMARY";
+
+    private void compact(TextView view) {
+        view.setTextSize(10); view.setMinHeight(Ui.dp(host,36));
+        view.setPadding(Ui.dp(host,10),0,Ui.dp(host,10),0);
+    }
+
+    private void showWorkspace(String name) {
+        drawerMode=name;
+        prefs.edit().putString("workspace",name).apply();
+        boolean observations=name.equals("Observations");
+        if(body!=null) body.setVisibility(observations?VISIBLE:GONE);
+        if(analysisPane!=null) analysisPane.setVisibility(observations?GONE:VISIBLE);
         refresh();
     }
 
@@ -212,6 +191,79 @@ public final class AnalystConsole extends LinearLayout {
         b.setTextSize(11);
         b.setPadding(Ui.dp(host, 9), 0, Ui.dp(host, 9), 0);
         b.setMinHeight(Ui.dp(host, 36)); row.addView(b);
+    }
+
+    private void scopeMenu() {
+        String[] choices={"Wi-Fi BSS","Bluetooth advertisements","All radios",
+            "Band: all","Band: 2.4 GHz","Band: 5 GHz","Band: 6 GHz",
+            "Wi-Fi STA table","Bluetooth connection table"};
+        new AlertDialog.Builder(host).setTitle("Observation scope")
+            .setItems(choices,(d,i)->{
+                if(i==0) layer="Wi-Fi";
+                else if(i==1) layer="BLE";
+                else if(i==2) layer="All";
+                else if(i>=3 && i<=6) band=new String[]{"All bands","2.4 GHz",
+                    "5 GHz","6 GHz"}[i-3];
+                else {
+                    layer=i==7?"STA":"BT Conn";
+                    new AlertDialog.Builder(host).setTitle(choices[i])
+                        .setMessage("NOT IN THIS DATA PATH\n\nPassive Android discovery APIs do not expose this table. Signal Hunter will not fabricate records.")
+                        .setPositiveButton("OK",null).show();
+                }
+                showWorkspace("Observations"); refresh();
+            }).show();
+    }
+
+    private void actionMenu() {
+        String[] actions={"Sort records","Toggle watch on selection",
+            "Toggle watch-only filter","Copy selected capture","Export capture",
+            "Import / compare capture","Return to LIVE Android path","Save current view",
+            "Restore saved view","Edit observation note","Edit session note",
+            "Assert link between selected records","Clear selection"};
+        new AlertDialog.Builder(host).setTitle("Analyst actions")
+            .setItems(actions,(d,i)->{
+                switch(i) {
+                    case 0: sortMenu(); break;
+                    case 1:
+                        for(String key:selected) if(!watches.remove(key)) watches.add(key);
+                        prefs.edit().putStringSet("watches",new HashSet<>(watches)).apply();
+                        refresh(); break;
+                    case 2: watchOnly=!watchOnly; refresh(); break;
+                    case 3: copy(export()); break;
+                    case 4: files.exportJson(export()); break;
+                    case 5: files.importJson(); break;
+                    case 6: replayMode=false; selected.clear(); focus=""; refresh(); break;
+                    case 7:
+                        prefs.edit().putString("layer",layer).putString("order",order)
+                            .putString("query",query.getText().toString())
+                            .putString("band",band).apply();
+                        Toast.makeText(host,"View saved",Toast.LENGTH_SHORT).show(); break;
+                    case 8:
+                        layer=prefs.getString("layer","Wi-Fi");
+                        order=prefs.getString("order","RSSI");
+                        band=prefs.getString("band","All bands");
+                        query.setText(prefs.getString("query","")); refresh(); break;
+                    case 9: notes(); break;
+                    case 10: sessionNote(); break;
+                    case 11: link(); break;
+                    case 12: selected.clear(); focus=""; refresh(); break;
+                }
+            }).show();
+    }
+
+    private void sortMenu() {
+        String[] values={"RSSI","Name","Recent","Channel"};
+        new AlertDialog.Builder(host).setTitle("Sort records")
+            .setItems(values,(d,i)->{order=values[i];refresh();}).show();
+    }
+
+    private void sessionNote() {
+        EditText note=Ui.input(host,"Capture note",operator("note:session"));
+        note.setSingleLine(false);
+        new AlertDialog.Builder(host).setTitle("Operator capture note").setView(note)
+            .setPositiveButton("Save",(d,w)->
+                operatorPut("note:session",note.getText().toString()))
+            .setNegativeButton("Cancel",null).show();
     }
 
     private Map<String, DeviceState> data() {
@@ -241,13 +293,15 @@ public final class AnalystConsole extends LinearLayout {
         if (order.equals("Channel")) cmp = Comparator.comparingInt(
             d -> d.latest.frequency);
         rows.sort(cmp.thenComparing(d -> d.key));
+        analysis=AdvancedAnalysis.build(data(),watches,System.currentTimeMillis(),
+            !replayMode);
         adapter.notifyDataSetChanged();
         summary.setText((replayMode ? "REPLAY / " + importedPath :
             "RADIO PATH LIVE / Android; Wi-Fi snapshots")
             + " | " + layer + " | " + rows.size() + " rows | "
             + selected.size() + " selected | " + order + " | " + band
             + (watchOnly ? " | WATCH FILTER" : "")
-            + "\n" + new java.text.SimpleDateFormat("HH:mm:ss",
+            + " | " + new java.text.SimpleDateFormat("HH:mm:ss",
                 Locale.US).format(new Date()));
         if (layer.equals("STA") || layer.equals("BT Conn")) {
             inspector.setText("NOT IN THIS DATA PATH\n"
@@ -268,23 +322,23 @@ public final class AnalystConsole extends LinearLayout {
         Observation o = d.latest;
         List<Observation> samples = d.recent();
         trace.setSamples(samples);
-        inspector.setText(o.key + "\n" + o.name
-            + "\nPROVENANCE: " + (replayMode ? "imported capture" :
-                "Android " + o.radio + " scan API")
-            + "\nSource: " + o.sourceNs + " ns / boot " + o.bootId
-            + "\nFirst retained: " + samples.get(0).wallMs
-            + "\nLast source wall: " + o.wallMs
-            + "\nReceived: " + o.receivedMs
-            + "\nRetained: " + samples.size() + " / accepted " + d.count
-            + "\nRSSI: " + o.rssi + " dBm\n"
-            + Analysis.identity(o) + "\n\n" + Analysis.series(samples)
-            + "\n\nPLATFORM FIELDS\n" + o.details
-            + "\n\nRAW AD BYTES\n" + (o.rawHex.isEmpty() ?
-                "Not exposed / not applicable" : o.rawHex)
-            + "\n" + ProtocolFields.bluetooth(o.rawHex)
-            + "\n\nOPERATOR NOTES\n"
-            + operator("note:" + focus)
-            + "\n\nRELATIONSHIPS\n" + relations(focus));
+        String provenance="PROVENANCE: "+(replayMode ? "imported capture / "+importedPath :
+            "Android "+o.radio+" scan API / sourceNs / bootId");
+        if(inspectMode.equals("PROTOCOL")) inspector.setText(o.key+"\n"+provenance+
+            "\n\nPLATFORM FIELDS\n"+o.details+"\n\nRAW OBSERVATION BYTES\n"+
+            (o.rawHex.isEmpty()?"Not exposed / not applicable":o.rawHex)+"\n"+
+            ProtocolFields.bluetooth(o.rawHex));
+        else if(inspectMode.equals("SERIES")) inspector.setText(o.key+"\n"+provenance+
+            "\n\n"+Analysis.series(samples));
+        else if(inspectMode.equals("LINKS")) inspector.setText(o.key+
+            "\n\n"+relations(focus));
+        else if(inspectMode.equals("NOTES")) inspector.setText(o.key+
+            "\nOPERATOR FACT / editable from ACTIONS\n\n"+operator("note:"+focus));
+        else inspector.setText(o.key+"\n"+(o.name.isEmpty()?"[unnamed]":o.name)+
+            "\n"+provenance+"\nSource: "+o.sourceNs+" ns / boot "+o.bootId+
+            "\nFirst retained: "+samples.get(0).wallMs+"\nLast source wall: "+o.wallMs+
+            "\nReceived: "+o.receivedMs+"\nRetained: "+samples.size()+
+            " / accepted "+d.count+"\nRSSI: "+o.rssi+" dBm\n"+Analysis.identity(o));
     }
 
     private String relations(String key) {
@@ -357,63 +411,27 @@ public final class AnalystConsole extends LinearLayout {
         if (drawerMode.equals("Diff")) { output.setText(comparison); return; }
         StringBuilder s = new StringBuilder();
         if (drawerMode.equals("Links")) {
-            s.append(relations(focus));
-        } else if (drawerMode.equals("Overlap")) {
-            s.append("DERIVED primary-channel proximity candidates\n"
-                + "Co-channel: equal primary frequency; adjacent: <20MHz.\n"
-                + "Not measured interference; widths/airtime not modeled.\n");
-            ArrayList<DeviceState> all = new ArrayList<>(data().values());
-            for (int i=0;i<all.size();i++) {
-                Observation a=all.get(i).latest;
-                if (a.frequency==0) continue;
-                for (int j=i+1;j<all.size();j++) {
-                    Observation b=all.get(j).latest;
-                    if (b.frequency==0) continue;
-                    int delta=Math.abs(a.frequency-b.frequency);
-                    if (delta<20) s.append(a.address).append(" ↔ ")
-                        .append(b.address).append(delta==0 ?
-                            " CO-CHANNEL" : " ADJACENT")
-                        .append(" Δ=").append(delta).append("MHz\n");
-                }
-            }
+            s.append("RELATIONSHIP WORKSPACE\n\n");
+            if(focus.isEmpty()) s.append("Select an observation in Wi-Fi BSS or BLE ADV.\n");
+            else s.append(relations(focus));
+            s.append("\nCHANNEL-FOOTPRINT RELATIONSHIPS / DERIVED\n");
+            for(String line:analysis.overlaps) s.append(line).append('\n');
         } else if (drawerMode.equals("Occupancy")) {
-            s.append("DERIVED observed BSS count / primary frequency\n"
-                + "NOT measured airtime, noise or spectrum utilization\n");
-            TreeMap<Integer,Integer> bins = new TreeMap<>();
-            for (DeviceState d : data().values()) {
-                if (d.latest.frequency > 0) bins.merge(
-                    d.latest.frequency, 1, Integer::sum);
-            }
-            for (Map.Entry<Integer,Integer> b : bins.entrySet())
+            s.append("DERIVED OCCUPANCY / retained observation density\n"
+                + "NOT measured airtime, noise floor, or spectrum utilization\n\n");
+            for (Map.Entry<Integer,Integer> b : analysis.channelCounts.entrySet())
                 s.append(b.getKey()).append(" MHz: ")
                     .append(b.getValue()).append(" observed BSS\n");
         } else if (drawerMode.equals("Spectrum")) {
-            s.append("RSSI vs primary frequency / latest samples\n"
-                + "Not a spectrum analyzer; no noise-floor measurement.");
+            s.append("LATEST RSSI VS PRIMARY FREQUENCY\n"
+                + "Android Wi-Fi scan observations only. Not a spectrum analyzer; no noise-floor measurement.\n\n"
+                + "WIDTH-AWARE FOOTPRINT RELATIONSHIPS / DERIVED\n");
+            for(String line:analysis.overlaps) s.append(line).append('\n');
         } else {
-            s.append("DERIVED events / retained window; no packet claims\n");
-            ArrayList<String> events = new ArrayList<>();
-            for (DeviceState d : data().values()) {
-                List<Observation> samples = d.recent();
-                if (!samples.isEmpty()) events.add(samples.get(0).wallMs
-                    + " " + d.key + " FIRST RETAINED OBSERVATION");
-                for (int i = 1; i < samples.size(); i++) {
-                    String change = Analysis.changes(samples.get(i-1),
-                        samples.get(i));
-                    if (!change.isEmpty()) events.add(
-                        samples.get(i).wallMs + " " + d.key + " " + change
-                        + (watches.contains(d.key) ? " WATCH ALERT" : ""));
-                }
-                long age = System.currentTimeMillis()-d.latest.wallMs;
-                if (!replayMode && age >
-                        (d.latest.radio.equals("BLE") ? 30000 : 180000))
-                    events.add(d.latest.wallMs + " " + d.key
-                        + " STALE (not proof of departure)"
-                        + (watches.contains(d.key) ? " WATCH ALERT" : ""));
-            }
-            Collections.sort(events, Collections.reverseOrder());
-            for (int i=0; i<Math.min(200, events.size()); i++)
-                s.append(events.get(i)).append('\n');
+            s.append("DERIVED EVENT LOG / retained observation window\n"
+                + "Disappearances are stale candidates, never proof of departure.\n\n");
+            for (int i=0; i<Math.min(300, analysis.events.size()); i++)
+                s.append(analysis.events.get(i)).append('\n');
         }
         output.setText(s.toString());
     }
@@ -516,14 +534,26 @@ public final class AnalystConsole extends LinearLayout {
         Toast.makeText(host, "Copied", Toast.LENGTH_SHORT).show();
     }
 
+    public boolean handleBack() {
+        if(!drawerMode.equals("Observations")) {
+            showWorkspace("Observations"); return true;
+        }
+        if(!selected.isEmpty() || !focus.isEmpty()) {
+            selected.clear(); focus=""; refresh(); return true;
+        }
+        if(query.hasFocus() || query.getText().length()>0) {
+            query.clearFocus(); query.setText(""); return true;
+        }
+        return false;
+    }
+
     @Override public boolean dispatchKeyEvent(KeyEvent e) {
-        if (e.getAction() != KeyEvent.ACTION_DOWN || query.hasFocus())
+        if (e.getAction() != KeyEvent.ACTION_DOWN)
             return super.dispatchKeyEvent(e);
+        if (e.getKeyCode() == KeyEvent.KEYCODE_ESCAPE) return handleBack();
+        if (query.hasFocus()) return super.dispatchKeyEvent(e);
         if (e.getKeyCode() == KeyEvent.KEYCODE_SLASH) {
             query.requestFocus(); return true;
-        }
-        if (e.getKeyCode() == KeyEvent.KEYCODE_ESCAPE) {
-            selected.clear(); refresh(); return true;
         }
         if (e.getKeyCode() == KeyEvent.KEYCODE_E) {
             files.exportJson(export()); return true;
@@ -552,16 +582,18 @@ public final class AnalystConsole extends LinearLayout {
             TextView t = old instanceof TextView ? (TextView) old :
                 Ui.mono(host, "", 11, Palette.TEXT);
             Observation o = rows.get(i).latest;
-            t.setMaxLines(2); t.setSingleLine(false);
+            t.setMaxLines(wide?1:2); t.setSingleLine(wide);
             t.setPadding(8, 0, 8, 0);
-            t.setHeight(Ui.dp(host, 40));
-            t.setText((selected.contains(o.key) ? "✓ " : "  ")
-                + (watches.contains(o.key) ? "★ " : "")
-                + (o.name.isEmpty() ? "[unnamed]" : o.name)
-                + "  " + o.rssi + " dBm\n  " + o.address
-                + " | " + o.radio + " | ch "
-                + (o.frequency == 0 ? "n/a" : SignalMath.channel(o.frequency))
-                + " | " + DeviceAdapter.age(host, o));
+            t.setHeight(Ui.dp(host, wide?34:40));
+            String mark=(selected.contains(o.key)?"✓":" ")+
+                (watches.contains(o.key)?"★":" ");
+            String name=o.name.isEmpty()?"[unnamed]":o.name;
+            String ch=o.frequency==0?"n/a":Integer.toString(SignalMath.channel(o.frequency));
+            if(wide) t.setText(String.format(Locale.US,
+                "%s %-22.22s  %-17s  %4d dBm  ch %-3s  %-6s  %s",
+                mark,name,o.address,o.rssi,ch,o.radio,DeviceAdapter.age(host,o)));
+            else t.setText(mark+" "+name+"  "+o.rssi+" dBm\n  "+o.address+
+                " | "+o.radio+" | ch "+ch+" | "+DeviceAdapter.age(host,o));
             t.setBackgroundColor(o.key.equals(focus) ?
                 Palette.RAISED : Palette.BG);
             return t;

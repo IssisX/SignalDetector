@@ -95,12 +95,12 @@ public final class AnalystInstrumentation extends Instrumentation {
                     console.load(export);
                     check(new JSONObject(console.export()).toString()
                         .equals(j.toString()),"JSON round trip");
-                    text(console,"BLE").performClick();
+                    text(console,"BLE ADV").performClick();
                     check(grid.getCount()==40,"BLE rows");
                     EditText q=(EditText)find(console,EditText.class);
                     q.setText("fixture-39");
                     check(grid.getCount()==1,"BLE search");
-                    text(console,"Wi-Fi").performClick();
+                    text(console,"WI-FI BSS").performClick();
                     check(grid.getCount()==1,"Wi-Fi search");
                     q.setText("");
                     grid.performItemClick(null,0,0);
@@ -130,16 +130,38 @@ public final class AnalystInstrumentation extends Instrumentation {
                     check(changed.length()==4,"selection survives mutation");
                     check(changed.getJSONObject(3).getInt("rssi")==-90,
                         "new RSSI reaches selected series/export");
+                    text(console,"EVENTS").performClick();
+                    check(console.handleBack(),"advanced workspace returns to grid");
                 } catch(Throwable t) { failure=t.toString(); }
             });
             if(failure!=null) throw new AssertionError(failure);
             waitForIdleSync();
-            android.graphics.Bitmap screenshot=getUiAutomation().takeScreenshot();
+            android.graphics.Bitmap landscape=getUiAutomation().takeScreenshot();
             try(java.io.FileOutputStream out=new java.io.FileOutputStream(
                     new java.io.File(getTargetContext().getFilesDir(),
-                    "analyst.png"))) {
-                screenshot.compress(android.graphics.Bitmap.CompressFormat.PNG,
+                    "analyst-landscape.png"))) {
+                landscape.compress(android.graphics.Bitmap.CompressFormat.PNG,
                     100,out);
+            }
+            runOnMainSync(()->a.setRequestedOrientation(
+                android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT));
+            android.os.SystemClock.sleep(900); waitForIdleSync();
+            AnalystConsole portrait=(AnalystConsole)find(
+                a.getWindow().getDecorView(),AnalystConsole.class);
+            check(portrait!=null,"portrait workstation exists");
+            runOnMainSync(()->{
+                try { portrait.load(input); }
+                catch(Throwable t) { failure=t.toString(); }
+            });
+            waitForIdleSync();
+            ListView portraitGrid=(ListView)find(portrait,ListView.class);
+            check(portraitGrid.getCount()==40,"portrait Wi-Fi rows");
+            check(portraitGrid.getChildCount()>=6,
+                "portrait visible rows="+portraitGrid.getChildCount());
+            android.graphics.Bitmap screenshot=getUiAutomation().takeScreenshot();
+            try(java.io.FileOutputStream out=new java.io.FileOutputStream(
+                    new java.io.File(getTargetContext().getFilesDir(),"analyst.png"))) {
+                screenshot.compress(android.graphics.Bitmap.CompressFormat.PNG,100,out);
             }
             result.putString("stream","ANALYST_PASS "+checks+" checks\n");
             finish(Activity.RESULT_OK,result);

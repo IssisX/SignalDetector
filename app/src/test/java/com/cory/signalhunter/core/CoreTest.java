@@ -1,6 +1,9 @@
 package com.cory.signalhunter.core;
 
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 
 public final class CoreTest {
     private static int checks;
@@ -70,6 +73,19 @@ public final class CoreTest {
         check(ring.recent().size()==360, "ring bounded");
         check(ring.recent().get(0).sourceNs==141, "ring ordered");
         check(ring.count==500, "ring total count");
+        Observation w1=new Observation("Wi-Fi","02:00:00:00:00:01","lab",
+            -45,2412,1,1000,1000,1,"Channel width code: 1","");
+        Observation w2=new Observation("Wi-Fi","02:00:00:00:00:02","lab",
+            -55,2437,1,1000,1000,1,"Channel width code: 0","");
+        Map<String,DeviceState> scene=new LinkedHashMap<>();
+        scene.put(w1.key,new DeviceState(w1)); scene.put(w2.key,new DeviceState(w2));
+        AdvancedAnalysis.Snapshot coupled=AdvancedAnalysis.build(scene,
+            Set.of(w1.key),1000,false);
+        check(AdvancedAnalysis.width(w1)==40,"channel width mapping");
+        check(coupled.overlaps.size()==1,"width-aware overlap");
+        check(coupled.profiles.get(w1.key).overlaps==1,"profile consumes overlap");
+        check(coupled.events.stream().anyMatch(x->x.contains("WATCH ALERT") &&
+            x.contains("channel-footprint")),"watch event consumes profile and overlap");
         System.out.println("PASS " + checks + " core assertions");
     }
 }

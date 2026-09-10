@@ -64,6 +64,7 @@ public final class MainActivity extends Activity
     private TextView reading, statistics, detailText;
     private LinearLayout detailHost;
     private final Map<String, String> labels = new HashMap<>();
+    private final Map<String, TextView> navigation = new HashMap<>();
     private String tab = "Analyst";
     private String filter = "All";
     private String sort = "Recent";
@@ -110,6 +111,17 @@ public final class MainActivity extends Activity
     @Override public void onConfigurationChanged(Configuration config) {
         super.onConfigurationChanged(config);
         buildShell();
+    }
+
+    @Override public void onBackPressed() {
+        if (analyst != null && analyst.handleBack()) return;
+        if (selectedSession != 0) {
+            selectedSession=0; render(); return;
+        }
+        if (!"Analyst".equals(tab)) {
+            tab="Analyst"; render(); return;
+        }
+        super.onBackPressed();
     }
 
     @Override protected void onStart() {
@@ -180,64 +192,66 @@ public final class MainActivity extends Activity
         } else root.setFitsSystemWindows(true);
         setContentView(root);
 
-        LinearLayout header = Ui.column(this);
+        LinearLayout header = Ui.row(this);
         Ui.pad(this, header, 8, 4, 8, 4);
-        LinearLayout titleRow = Ui.row(this);
-        LinearLayout title = Ui.column(this);
-        title.addView(Ui.text(this, "Signal Hunter", 15,
-            Palette.TEXT, true));
-        titleRow.addView(title, new LinearLayout.LayoutParams(0, -2, 1));
-        TextView version = Ui.mono(this, "v0.2", 10, Palette.MUTED);
-        titleRow.addView(version);
-        header.addView(titleRow);
-        header.addView(Ui.space(this, 2));
+        TextView brand=Ui.text(this,wide?"SIGNAL HUNTER":"SH",13,
+            Palette.TEXT,true);
+        header.addView(brand,new LinearLayout.LayoutParams(
+            wide?Ui.dp(this,150):Ui.dp(this,34),Ui.dp(this,42)));
         LinearLayout controls = Ui.row(this);
         scanButton = Ui.button(this, "STOP", false, v -> toggleScan());
+        compactShell(scanButton);
         controls.addView(scanButton);
-        controls.addView(Ui.spaceWidth(this, 8));
+        controls.addView(Ui.spaceWidth(this, 5));
         recordButton = Ui.button(this, "RECORD", false, v -> toggleRecord());
+        compactShell(recordButton);
         controls.addView(recordButton);
-        controls.addView(new View(this), new LinearLayout.LayoutParams(0, 1, 1));
+        controls.addView(Ui.spaceWidth(this,5));
         TextView wifi = Ui.button(this, "Wi-Fi scan", false,
             v -> radios.wifiNow());
+        compactShell(wifi);
         controls.addView(wifi);
         header.addView(controls);
-        header.addView(Ui.space(this, 2));
-        counts = Ui.mono(this, "0 devices", 11, Palette.MUTED);
-        header.addView(counts);
+        header.addView(Ui.spaceWidth(this,8));
+        LinearLayout health=Ui.column(this);
+        counts = Ui.mono(this, "0 devices", 10, Palette.ACCENT);
+        counts.setSingleLine(true);
+        health.addView(counts);
         status = Ui.text(this, "Initializing radios", 11,
             Palette.MUTED, false);
-        status.setMaxLines(2);
-        header.addView(Ui.space(this, 3));
-        header.addView(status);
-        root.addView(header);
+        status.setSingleLine(true);
+        health.addView(status);
+        if(wide) header.addView(health,new LinearLayout.LayoutParams(0,-1,1));
+        root.addView(header,new LinearLayout.LayoutParams(-1,Ui.dp(this,50)));
+        root.addView(Ui.divider(this));
+
+        LinearLayout nav = Ui.row(this);
+        Ui.pad(this,nav,6,3,6,3);
+        navigation.clear();
+        String[][] destinations={{"Analyst","WORKSTATION"},{"Discover","DISCOVER"},
+            {"Hunt","HUNT"},{"Sessions","SESSIONS"},{"Library","LIBRARY"}};
+        for(String[] destination:destinations) {
+            TextView item=Ui.button(this,destination[1],tab.equals(destination[0]),v->{
+                selectedSession=0; tab=destination[0]; render();
+            });
+            compactShell(item); navigation.put(destination[0],item);
+            nav.addView(item,new LinearLayout.LayoutParams(0,Ui.dp(this,36),1));
+        }
+        root.addView(nav,new LinearLayout.LayoutParams(-1,Ui.dp(this,42)));
         root.addView(Ui.divider(this));
 
         content = new FrameLayout(this);
         root.addView(content, new LinearLayout.LayoutParams(
             -1, 0, 1));
-        root.addView(Ui.divider(this));
-        LinearLayout nav = Ui.row(this);
-        Ui.pad(this, nav, wide ? 24 : 8, 8, wide ? 24 : 8, 8);
-        for (String name : new String[]{"Analyst", "Discover", "Hunt",
-                "Sessions", "Library"}) {
-            TextView item = Ui.text(this, name, wide ? 14 : 12,
-                tab.equals(name) ? Palette.ACCENT : Palette.MUTED,
-                tab.equals(name));
-            item.setGravity(Gravity.CENTER);
-            item.setMinHeight(Ui.dp(this, 48));
-            item.setOnClickListener(v -> {
-                selectedSession = 0;
-                tab = name;
-                render();
-            });
-            nav.addView(item, new LinearLayout.LayoutParams(0, -1, 1));
-        }
-        root.addView(nav);
         render();
         changed();
         main.removeCallbacks(ticker);
         main.postDelayed(ticker, 1000);
+    }
+
+    private void compactShell(TextView view) {
+        view.setTextSize(10); view.setMinHeight(Ui.dp(this,34));
+        view.setPadding(Ui.dp(this,8),0,Ui.dp(this,8),0);
     }
 
     private final Runnable ticker = new Runnable() {
@@ -328,6 +342,12 @@ public final class MainActivity extends Activity
         detailText = null;
         detailHost = null;
         analyst = null;
+        for(Map.Entry<String,TextView> entry:navigation.entrySet()) {
+            boolean active=entry.getKey().equals(tab);
+            entry.getValue().setTextColor(active?Palette.BG:Palette.TEXT);
+            entry.getValue().setBackground(Ui.bg(this,active?Palette.ACCENT:
+                Palette.RAISED,8,active?0:Palette.LINE));
+        }
         switch (tab) {
             case "Analyst":
                 analyst = new com.cory.signalhunter.ui.AnalystConsole(
