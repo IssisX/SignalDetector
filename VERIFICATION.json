@@ -1,0 +1,22 @@
+{
+  "artifact": "SignalHunter source v0.1.0",
+  "status": "ANDROID_BUILD_VERIFIED_DEVICE_RADIOS_NOT_YET_VERIFIED",
+  "checks": {
+    "core_java17": "PASS: 21 assertions",
+    "xml": "PASS: project resources processed successfully by Android build",
+    "sqlite": "PASS: schema and cross-boot uniqueness core checks",
+    "android_compile": "PASS: :app:assembleDebug on GitHub-hosted Ubuntu runner",
+    "apk_package": "PASS: com.cory.signalhunter",
+    "apk_zipalign": "PASS",
+    "apk_signature": "PASS: debug APK signature verified",
+    "device_ble_wifi": "NOT RUN: requires physical Android hardware"
+  },
+  "build": {
+    "jdk": "17",
+    "android_sdk": "35",
+    "build_tools": "35.0.0",
+    "android_gradle_plugin": "8.7.3",
+    "gradle": "8.9",
+    "verified_apk_sha256": "c53f031708cf3d1c9d790383c316e2ea800503915ee1e55dd91cad85b284291e"
+  }
+}
