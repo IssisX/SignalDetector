@@ -46,6 +46,7 @@ public final class AnalystConsole extends LinearLayout {
     private boolean replayMode, watchOnly;
     private JSONObject replayOperator = new JSONObject();
     private String importedPath = "UNKNOWN";
+    private String band = "All bands";
     private String comparison = "Import a second capture to compare.";
     private final boolean wide;
 
@@ -109,6 +110,21 @@ public final class AnalystConsole extends LinearLayout {
             refresh();
         });
         button(tools, "Notes", this::notes);
+        button(tools, "Session note", () -> {
+            EditText note=Ui.input(host,"Capture note",
+                operator("note:session"));
+            note.setSingleLine(false);
+            new AlertDialog.Builder(host).setTitle("Operator capture note")
+                .setView(note).setPositiveButton("Save", (d,w) ->
+                    operatorPut("note:session",note.getText().toString()))
+                .setNegativeButton("Cancel",null).show();
+        });
+        button(tools, "Band", () -> {
+            String[] bands={"All bands","2.4 GHz","5 GHz","6 GHz"};
+            new AlertDialog.Builder(host).setItems(bands,(d,i) -> {
+                band=bands[i]; refresh();
+            }).show();
+        });
         button(tools, "Link", this::link);
         HorizontalScrollView scroller = new HorizontalScrollView(host);
         scroller.addView(tools); addView(scroller);
@@ -209,6 +225,8 @@ public final class AnalystConsole extends LinearLayout {
         for (DeviceState state : data().values()) {
             Observation o = state.latest;
             if (!"All".equals(layer) && !layer.equals(o.radio)) continue;
+            if (!band.equals("All bands") && (o.frequency==0 ||
+                    !SignalMath.band(o.frequency).equals(band))) continue;
             if (watchOnly && !watches.contains(o.key)) continue;
             if (!(o.name + o.address + o.details).toLowerCase(Locale.ROOT)
                     .contains(q)) continue;
@@ -227,7 +245,7 @@ public final class AnalystConsole extends LinearLayout {
         summary.setText((replayMode ? "REPLAY / " + importedPath :
             "RADIO PATH LIVE / Android; Wi-Fi snapshots")
             + " | " + layer + " | " + rows.size() + " rows | "
-            + selected.size() + " selected | " + order
+            + selected.size() + " selected | " + order + " | " + band
             + (watchOnly ? " | WATCH FILTER" : "")
             + "\n" + new java.text.SimpleDateFormat("HH:mm:ss",
                 Locale.US).format(new Date()));
@@ -377,11 +395,14 @@ public final class AnalystConsole extends LinearLayout {
             ArrayList<String> events = new ArrayList<>();
             for (DeviceState d : data().values()) {
                 List<Observation> samples = d.recent();
+                if (!samples.isEmpty()) events.add(samples.get(0).wallMs
+                    + " " + d.key + " FIRST RETAINED OBSERVATION");
                 for (int i = 1; i < samples.size(); i++) {
                     String change = Analysis.changes(samples.get(i-1),
                         samples.get(i));
                     if (!change.isEmpty()) events.add(
-                        samples.get(i).wallMs + " " + d.key + " " + change);
+                        samples.get(i).wallMs + " " + d.key + " " + change
+                        + (watches.contains(d.key) ? " WATCH ALERT" : ""));
                 }
                 long age = System.currentTimeMillis()-d.latest.wallMs;
                 if (!replayMode && age >
@@ -408,6 +429,15 @@ public final class AnalystConsole extends LinearLayout {
                     continue;
                 for (Observation o : state.recent()) {
                     JSONObject j = new JSONObject();
+                    j.put("uid",o.key+":"+o.bootId+":"+o.sourceNs);
+                    j.put("layer",o.radio.equals("BLE")?"bt":"wifi");
+                    j.put("kind",o.radio.equals("BLE")?"advertisement":"BSS");
+                    j.put("provenance",new JSONArray().put(
+                        (replayMode && importedPath.startsWith("SYNTHETIC") ?
+                        "SYNTHETIC / DEMO SCENE" : "Android "+o.radio
+                        +" scan API / sourceNs / bootId")));
+                    j.put("quality","OBSERVED; not physical identity; "
+                        + "Wi-Fi may be cached; imported claims unverified");
                     j.put("radio", o.radio).put("address", o.address)
                         .put("name", o.name).put("rssi", o.rssi)
                         .put("frequency", o.frequency)

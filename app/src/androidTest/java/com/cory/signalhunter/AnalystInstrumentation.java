@@ -111,9 +111,36 @@ public final class AnalystInstrumentation extends Instrumentation {
                     check(new JSONObject(console.export())
                         .getJSONArray("observations").length()==3,
                         "selection survives refresh");
+                    java.lang.reflect.Field replayField=
+                        AnalystConsole.class.getDeclaredField("replay");
+                    replayField.setAccessible(true);
+                    java.util.Map<String,com.cory.signalhunter.core.DeviceState>
+                        scene=(java.util.Map<String,
+                        com.cory.signalhunter.core.DeviceState>)
+                        replayField.get(console);
+                    com.cory.signalhunter.core.DeviceState target=
+                        scene.get("Wi-Fi:02:00:00:00:00:00");
+                    target.accept(new com.cory.signalhunter.core.Observation(
+                        "Wi-Fi","02:00:00:00:00:00","mutated fixture",
+                        -90,2437,4000000000L,104000,104000,1,
+                        "fixture", ""));
+                    console.refresh();
+                    JSONArray changed=new JSONObject(console.export())
+                        .getJSONArray("observations");
+                    check(changed.length()==4,"selection survives mutation");
+                    check(changed.getJSONObject(3).getInt("rssi")==-90,
+                        "new RSSI reaches selected series/export");
                 } catch(Throwable t) { failure=t.toString(); }
             });
             if(failure!=null) throw new AssertionError(failure);
+            waitForIdleSync();
+            android.graphics.Bitmap screenshot=getUiAutomation().takeScreenshot();
+            try(java.io.FileOutputStream out=new java.io.FileOutputStream(
+                    new java.io.File(getTargetContext().getFilesDir(),
+                    "analyst.png"))) {
+                screenshot.compress(android.graphics.Bitmap.CompressFormat.PNG,
+                    100,out);
+            }
             result.putString("stream","ANALYST_PASS "+checks+" checks\n");
             finish(Activity.RESULT_OK,result);
         } catch(Throwable t) {

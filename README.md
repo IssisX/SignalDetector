@@ -97,3 +97,42 @@ and Fold layout behavior.
 - `MainActivity.java` - navigation, permissions, lifecycle, actions.
 
 No third-party runtime library is needed in the application.
+# Analyst workstation update (0.2.0)
+
+The native Analyst screen is now the default entry point. It adds a
+compact Wi-Fi/BLE list, identity-keyed multi-selection, a persisted
+list/inspector splitter, source timestamps, retained RSSI history,
+search, radio/band filters, sort, watch filtering, operator notes and
+explicit operator links. Discover, Hunt, Sessions and Library remain.
+
+Wi-Fi information elements exposed by Android API 30+ are retained
+with their element IDs and raw payloads. Bounded decoders cover RSN
+suite selectors and PMF bits, DTIM, QBSS load and vendor OUIs. The BLE
+inspector exposes AD structure payloads, flags, Tx power and company
+identifiers without inventing physical-device identity.
+
+The Analyst JSON format is `signalhunter.analyst.1`. Export contains
+the retained window (at most 360 samples per identity), not the whole
+SQLite session archive. Select rows to export a subset, or clear
+selection to export both radios. Imports are isolated replay state;
+they never enter the live radio repository. Importing a second capture
+produces a latest-field capture diff. Imported claims are not verified
+measurements. The existing Sessions export remains available separately.
+
+Channel plots are observations, not spectrum-analyzer measurements.
+The heatmap bins observations into 10-second cells over five minutes.
+Overlap is a primary-frequency proximity heuristic, not a measurement
+of interference or airtime. Stale observations are not proof of departure.
+Temporal coincidence is labeled HYPOTHESIS and never establishes identity.
+
+Remaining product scope: complete HE/EHT decoding and BSS color,
+beacon interval/subtype evidence, width-aware interference modeling,
+vendor/rotation clustering, a dedicated left rail, named multi-view
+management, durable change-event archive and complete session-diff UI.
+Wi-Fi STA and Bluetooth connection inventory are explicitly unavailable
+in the current passive discovery data path. No synthetic radio generator
+is shipped; instrumentation fixtures are imported with a synthetic label.
+
+CI runs the real Activity on an API 35 emulator at 1280x720. Its checks
+do not establish physical Fold6 scanning, OEM throttling, or usability
+in every fold/orientation. Device testing remains required.
