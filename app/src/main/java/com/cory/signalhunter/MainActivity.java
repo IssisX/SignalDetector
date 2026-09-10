@@ -47,6 +47,10 @@ public final class MainActivity extends Activity
         implements Repository.Listener {
     private static final int PERMISSIONS = 100;
     private static final int EXPORT = 101;
+    private static final int ANALYST_EXPORT = 102;
+    private static final int ANALYST_IMPORT = 103;
+    private String analystExport;
+    private com.cory.signalhunter.ui.AnalystConsole analyst;
     private final Handler main = new Handler(Looper.getMainLooper());
     private final SimpleDateFormat date = new SimpleDateFormat(
         "MMM d, HH:mm:ss", Locale.getDefault());
@@ -60,7 +64,7 @@ public final class MainActivity extends Activity
     private TextView reading, statistics, detailText;
     private LinearLayout detailHost;
     private final Map<String, String> labels = new HashMap<>();
-    private String tab = "Discover";
+    private String tab = "Analyst";
     private String filter = "All";
     private String sort = "Recent";
     private String search = "";
@@ -177,19 +181,16 @@ public final class MainActivity extends Activity
         setContentView(root);
 
         LinearLayout header = Ui.column(this);
-        Ui.pad(this, header, wide ? 24 : 16, 17,
-            wide ? 24 : 16, 12);
+        Ui.pad(this, header, 8, 4, 8, 4);
         LinearLayout titleRow = Ui.row(this);
         LinearLayout title = Ui.column(this);
-        title.addView(Ui.label(this, "FIELD INSTRUMENT / 01"));
-        title.addView(Ui.space(this, 4));
-        title.addView(Ui.text(this, "Signal Hunter", wide ? 27 : 24,
+        title.addView(Ui.text(this, "Signal Hunter", 15,
             Palette.TEXT, true));
         titleRow.addView(title, new LinearLayout.LayoutParams(0, -2, 1));
         TextView version = Ui.mono(this, "v0.1", 10, Palette.MUTED);
         titleRow.addView(version);
         header.addView(titleRow);
-        header.addView(Ui.space(this, 13));
+        header.addView(Ui.space(this, 2));
         LinearLayout controls = Ui.row(this);
         scanButton = Ui.button(this, "STOP", false, v -> toggleScan());
         controls.addView(scanButton);
@@ -201,7 +202,7 @@ public final class MainActivity extends Activity
             v -> radios.wifiNow());
         controls.addView(wifi);
         header.addView(controls);
-        header.addView(Ui.space(this, 11));
+        header.addView(Ui.space(this, 2));
         counts = Ui.mono(this, "0 devices", 11, Palette.MUTED);
         header.addView(counts);
         status = Ui.text(this, "Initializing radios", 11,
@@ -218,7 +219,7 @@ public final class MainActivity extends Activity
         root.addView(Ui.divider(this));
         LinearLayout nav = Ui.row(this);
         Ui.pad(this, nav, wide ? 24 : 8, 8, wide ? 24 : 8, 8);
-        for (String name : new String[]{"Discover", "Hunt",
+        for (String name : new String[]{"Analyst", "Discover", "Hunt",
                 "Sessions", "Library"}) {
             TextView item = Ui.text(this, name, wide ? 14 : 12,
                 tab.equals(name) ? Palette.ACCENT : Palette.MUTED,
@@ -298,6 +299,7 @@ public final class MainActivity extends Activity
 
     private void refreshLive() {
         if (root == null) return;
+        if (analyst != null) analyst.refresh();
         int ble = 0, wifi = 0;
         for (DeviceState d : repository.devices().values()) {
             if ("BLE".equals(d.latest.radio)) ble++;
@@ -325,7 +327,28 @@ public final class MainActivity extends Activity
         statistics = null;
         detailText = null;
         detailHost = null;
+        analyst = null;
         switch (tab) {
+            case "Analyst":
+                analyst = new com.cory.signalhunter.ui.AnalystConsole(
+                    this, repository,
+                    new com.cory.signalhunter.ui.AnalystConsole.Files() {
+                        public void exportJson(String value) {
+                            analystExport = value;
+                            Intent i = new Intent(Intent.ACTION_CREATE_DOCUMENT);
+                            i.setType("application/json");
+                            i.addCategory(Intent.CATEGORY_OPENABLE);
+                            i.putExtra(Intent.EXTRA_TITLE, "signal-capture.json");
+                            startActivityForResult(i, ANALYST_EXPORT);
+                        }
+                        public void importJson() {
+                            Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+                            i.setType("application/json");
+                            i.addCategory(Intent.CATEGORY_OPENABLE);
+                            startActivityForResult(i, ANALYST_IMPORT);
+                        }
+                    });
+                showPage(analyst); break;
             case "Hunt": renderHunt(); break;
             case "Sessions": renderSessions(); break;
             case "Library": renderLibrary(); break;
@@ -917,6 +940,47 @@ public final class MainActivity extends Activity
     @Override protected void onActivityResult(int request, int result,
             Intent data) {
         super.onActivityResult(request, result, data);
+        if ((request == ANALYST_EXPORT || request == ANALYST_IMPORT)
+                && result == RESULT_OK && data != null
+                && data.getData() != null) {
+            final Uri uri = data.getData();
+            final String snapshot = analystExport;
+            new Thread(() -> {
+                try {
+                    if (request == ANALYST_EXPORT) {
+                        if (snapshot == null) throw new java.io.IOException(
+                            "Capture expired during Activity recreation; export again");
+                        try (java.io.OutputStream out =
+                                getContentResolver().openOutputStream(uri, "wt")) {
+                            if (out == null) throw new java.io.IOException("No output");
+                            out.write(snapshot.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                        }
+                    } else {
+                        java.io.ByteArrayOutputStream bytes =
+                            new java.io.ByteArrayOutputStream();
+                        try (java.io.InputStream in =
+                                getContentResolver().openInputStream(uri)) {
+                            if (in == null) throw new java.io.IOException("No input");
+                            byte[] buf = new byte[8192]; int n;
+                            while ((n = in.read(buf)) != -1) {
+                                if (bytes.size()+n > 16000000)
+                                    throw new java.io.IOException("Capture exceeds 16 MB");
+                                bytes.write(buf, 0, n);
+                            }
+                        }
+                        String json = bytes.toString("UTF-8");
+                        runOnUiThread(() -> {
+                            if (isDestroyed() || analyst == null) return;
+                            try { analyst.load(json); }
+                            catch (Exception e) { error("Import: " + e.getMessage()); }
+                        });
+                    }
+                } catch (Exception e) {
+                    runOnUiThread(() -> error("Capture I/O: " + e.getMessage()));
+                }
+            }, "capture-io").start();
+            return;
+        }
         if (request == EXPORT && result == RESULT_OK && data != null) {
             Uri uri = data.getData();
             if (uri == null) { error("Export destination missing"); return; }

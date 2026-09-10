@@ -49,6 +49,27 @@ public final class CoreTest {
             SignalMath.wallTime(6, 5, 1000);
             throw new AssertionError("future timestamp accepted");
         } catch (IllegalArgumentException expected) { checks++; }
+        check(ProtocolFields.wifi(5, 0, "0003").contains("period=3"),
+            "DTIM decode");
+        check(ProtocolFields.wifi(11, 0, "0200800100")
+            .contains("stations=2"), "QBSS little endian");
+        check(ProtocolFields.wifi(48, 0, "0100000fac040100000fac04"
+            + "0100000fac08c000").contains("required=true"),
+            "RSN PMF bits");
+        check(ProtocolFields.wifi(48, 0, "0100")
+            .contains("TRUNCATED"), "short RSN rejected");
+        check(ProtocolFields.bluetooth("020af6")
+            .contains("-10 dBm"), "signed BLE Tx power");
+        check(ProtocolFields.bluetooth("0501")
+            .contains("TRUNCATED"), "AD bounds check");
+        check(Analysis.series(List.of(sample(100, -70),
+            sample(200, -70), sample(300, -70)))
+            .contains("100.0 / 100"), "stable series");
+        DeviceState ring = new DeviceState(sample(1, -70));
+        for (int i=2;i<=500;i++) ring.accept(sample(i, -60));
+        check(ring.recent().size()==360, "ring bounded");
+        check(ring.recent().get(0).sourceNs==141, "ring ordered");
+        check(ring.count==500, "ring total count");
         System.out.println("PASS " + checks + " core assertions");
     }
 }

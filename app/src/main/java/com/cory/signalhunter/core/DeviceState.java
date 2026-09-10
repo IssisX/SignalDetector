@@ -7,7 +7,9 @@ public final class DeviceState {
     public final String key;
     public Observation latest;
     public int count;
-    private final ArrayList<Observation> recent = new ArrayList<>();
+    private final Observation[] recent = new Observation[360];
+    private int next;
+    private int size;
 
     public DeviceState(Observation first) {
         key = first.key;
@@ -29,12 +31,18 @@ public final class DeviceState {
         }
         latest = o;
         count++;
-        recent.add(o);
-        if (recent.size() > 360) recent.remove(0);
+        recent[next] = o;
+        next = (next + 1) % recent.length;
+        size = Math.min(size + 1, recent.length);
         return true;
     }
 
     public List<Observation> recent() {
-        return new ArrayList<>(recent);
+        ArrayList<Observation> out = new ArrayList<>(size);
+        int start = (next - size + recent.length) % recent.length;
+        for (int i = 0; i < size; i++) {
+            out.add(recent[(start + i) % recent.length]);
+        }
+        return out;
     }
 }

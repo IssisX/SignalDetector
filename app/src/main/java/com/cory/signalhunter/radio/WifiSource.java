@@ -133,7 +133,28 @@ public final class WifiSource {
                     .append(" microseconds since boot");
                 if (Build.VERSION.SDK_INT >= 30) {
                     info.append("\nWi-Fi standard code: ").append(r.getWifiStandard());
+                    info.append("\nIE provenance: Android ScanResult"
+                        + ".getInformationElements; frame subtype unavailable");
+                    for (ScanResult.InformationElement ie :
+                            r.getInformationElements()) {
+                        java.nio.ByteBuffer bytes = ie.getBytes();
+                        StringBuilder hex = new StringBuilder();
+                        while (bytes.hasRemaining()) {
+                            int value = bytes.get() & 255;
+                            hex.append("0123456789abcdef".charAt(value >> 4));
+                            hex.append("0123456789abcdef".charAt(value & 15));
+                        }
+                        info.append("\nIE ").append(ie.getId())
+                            .append('/').append(ie.getIdExt())
+                            .append(": ").append(hex);
+                        info.append('\n').append(
+                            com.cory.signalhunter.core.ProtocolFields.wifi(
+                                ie.getId(), ie.getIdExt(), hex.toString()));
+                    }
                 }
+                info.append("\nSnapshot state: ").append(label);
+                info.append("\nMeasurement source: Android ScanResult");
+                info.append("\nSTA / probe vs beacon: NOT IN THIS DATA PATH");
                 // Android scan results are metadata, not raw 802.11 frames.
                 // Preserve exposed fields; do not fabricate frame bytes.
                 sink.observation(new Observation("Wi-Fi", r.BSSID,
