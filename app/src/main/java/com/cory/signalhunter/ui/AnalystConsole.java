@@ -44,6 +44,8 @@ public final class AnalystConsole extends LinearLayout {
     private final Spectrum spectrum;
     private String layer, order, focus = "", drawerMode = "Events";
     private boolean replayMode, watchOnly;
+    private JSONObject replayOperator = new JSONObject();
+    private String importedPath = "UNKNOWN";
     private String comparison = "Import a second capture to compare.";
     private final boolean wide;
 
@@ -100,6 +102,12 @@ public final class AnalystConsole extends LinearLayout {
                 .putString("query", query.getText().toString()).apply();
             Toast.makeText(host, "View saved", Toast.LENGTH_SHORT).show();
         });
+        button(tools, "Restore view", () -> {
+            layer = prefs.getString("layer", "Wi-Fi");
+            order = prefs.getString("order", "RSSI");
+            query.setText(prefs.getString("query", ""));
+            refresh();
+        });
         button(tools, "Notes", this::notes);
         button(tools, "Link", this::link);
         HorizontalScrollView scroller = new HorizontalScrollView(host);
@@ -115,7 +123,8 @@ public final class AnalystConsole extends LinearLayout {
         grid = new ListView(host);
         grid.setAdapter(adapter);
         grid.setDividerHeight(1);
-        grid.setChoiceMode(ListView.CHOICE_MODE_MULTIPLE);
+        // Selection is keyed by observation identity, never adapter position.
+        grid.setChoiceMode(ListView.CHOICE_MODE_NONE);
         grid.setOnItemClickListener((p, v, pos, id) -> {
             focus = rows.get(pos).key;
             if (!selected.remove(focus)) selected.add(focus);
@@ -155,12 +164,18 @@ public final class AnalystConsole extends LinearLayout {
         addView(body, new LayoutParams(-1, 0, 1));
         LinearLayout tabs = Ui.row(host);
         for (String name : new String[]{"Events", "Spectrum",
-                "Occupancy", "Links", "Diff"}) {
-            button(tabs, name, () -> { drawerMode = name; refresh(); });
+                "Occupancy", "Overlap", "Links", "Diff"}) {
+            button(tabs, name, () -> {
+                drawerMode = name; drawer.setVisibility(VISIBLE);
+                prefs.edit().putBoolean("drawer", true).apply();
+                refresh();
+            });
         }
         button(tabs, "Drawer", () -> {
             drawer.setVisibility(drawer.getVisibility() == VISIBLE ?
                 GONE : VISIBLE);
+            prefs.edit().putBoolean("drawer",
+                drawer.getVisibility() == VISIBLE).apply();
         });
         HorizontalScrollView tabScroll = new HorizontalScrollView(host);
         tabScroll.addView(tabs); addView(tabScroll);
@@ -170,7 +185,9 @@ public final class AnalystConsole extends LinearLayout {
         spectrum = new Spectrum(host);
         drawer.addView(spectrum, new LayoutParams(-1, Ui.dp(host, 100)));
         drawer.addView(Ui.scroll(host, output), new LayoutParams(-1, 0, 1));
-        addView(drawer, new LayoutParams(-1, Ui.dp(host, 130)));
+        addView(drawer, new LayoutParams(-1, Ui.dp(host, 90)));
+        drawer.setVisibility(prefs.getBoolean("drawer", false) ?
+            VISIBLE : GONE);
         refresh();
     }
 
@@ -207,7 +224,7 @@ public final class AnalystConsole extends LinearLayout {
             d -> d.latest.frequency);
         rows.sort(cmp.thenComparing(d -> d.key));
         adapter.notifyDataSetChanged();
-        summary.setText((replayMode ? "REPLAY / IMPORTED" :
+        summary.setText((replayMode ? "REPLAY / " + importedPath :
             "RADIO PATH LIVE / Android; Wi-Fi snapshots")
             + " | " + layer + " | " + rows.size() + " rows | "
             + selected.size() + " selected | " + order
@@ -248,7 +265,7 @@ public final class AnalystConsole extends LinearLayout {
                 "Not exposed / not applicable" : o.rawHex)
             + "\n" + ProtocolFields.bluetooth(o.rawHex)
             + "\n\nOPERATOR NOTES\n"
-            + prefs.getString("note:" + focus, "")
+            + operator("note:" + focus)
             + "\n\nRELATIONSHIPS\n" + relations(focus));
     }
 
@@ -269,20 +286,32 @@ public final class AnalystConsole extends LinearLayout {
                     .append(b.key).append("; not identity\n");
         }
         s.append("OPERATOR ASSERTIONS: ")
-            .append(prefs.getString("link:" + key, "none"));
+            .append(operator("link:" + key));
         return s.toString();
+    }
+
+    private String operator(String key) {
+        return replayMode ? replayOperator.optString(key, "") :
+            prefs.getString(key, "");
+    }
+
+    private void operatorPut(String key, String value) {
+        if (replayMode) {
+            try { replayOperator.put(key, value); }
+            catch (JSONException e) { throw new IllegalStateException(e); }
+        } else prefs.edit().putString(key, value).apply();
     }
 
     private void notes() {
         if (focus.isEmpty()) return;
         final String key = focus;
         EditText input = Ui.input(host, "Operator note",
-            prefs.getString("note:"+key, ""));
+            operator("note:"+key));
         input.setSingleLine(false);
         new AlertDialog.Builder(host).setTitle(key).setView(input)
             .setPositiveButton("Save", (d,w) -> {
-                prefs.edit().putString("note:"+key,
-                    input.getText().toString()).apply(); refresh();
+                operatorPut("note:"+key, input.getText().toString());
+                refresh();
             }).setNegativeButton("Cancel", null).show();
     }
 
@@ -296,20 +325,39 @@ public final class AnalystConsole extends LinearLayout {
         new AlertDialog.Builder(host).setTitle("Assert operator link?")
             .setMessage(String.join("\n", keys))
             .setPositiveButton("Assert", (d,w) -> {
-                for (String key : keys) prefs.edit().putString(
-                    "link:"+key, String.join("\n", keys)).apply();
+                for (String key : keys) operatorPut(
+                    "link:"+key, String.join("\n", keys));
                 refresh();
             }).setNegativeButton("Cancel", null).show();
     }
 
     private void drawAnalysis() {
-        spectrum.setVisibility(drawerMode.equals("Spectrum") ?
+        spectrum.setVisibility((drawerMode.equals("Spectrum") ||
+            drawerMode.equals("Occupancy")) ?
             VISIBLE : GONE);
         spectrum.invalidate();
         if (drawerMode.equals("Diff")) { output.setText(comparison); return; }
         StringBuilder s = new StringBuilder();
         if (drawerMode.equals("Links")) {
             s.append(relations(focus));
+        } else if (drawerMode.equals("Overlap")) {
+            s.append("DERIVED primary-channel proximity candidates\n"
+                + "Co-channel: equal primary frequency; adjacent: <20MHz.\n"
+                + "Not measured interference; widths/airtime not modeled.\n");
+            ArrayList<DeviceState> all = new ArrayList<>(data().values());
+            for (int i=0;i<all.size();i++) {
+                Observation a=all.get(i).latest;
+                if (a.frequency==0) continue;
+                for (int j=i+1;j<all.size();j++) {
+                    Observation b=all.get(j).latest;
+                    if (b.frequency==0) continue;
+                    int delta=Math.abs(a.frequency-b.frequency);
+                    if (delta<20) s.append(a.address).append(" ↔ ")
+                        .append(b.address).append(delta==0 ?
+                            " CO-CHANNEL" : " ADJACENT")
+                        .append(" Δ=").append(delta).append("MHz\n");
+                }
+            }
         } else if (drawerMode.equals("Occupancy")) {
             s.append("DERIVED observed BSS count / primary frequency\n"
                 + "NOT measured airtime, noise or spectrum utilization\n");
@@ -353,7 +401,7 @@ public final class AnalystConsole extends LinearLayout {
         try {
             JSONObject root = new JSONObject();
             root.put("schema", "signalhunter.analyst.1");
-            root.put("path", replayMode ? "REPLAY" : "ANDROID");
+            root.put("path", replayMode ? importedPath : "ANDROID");
             JSONArray records = new JSONArray();
             for (DeviceState state : data().values()) {
                 if (!selected.isEmpty() && !selected.contains(state.key))
@@ -370,8 +418,10 @@ public final class AnalystConsole extends LinearLayout {
                 }
             }
             root.put("observations", records);
-            JSONObject operator = new JSONObject();
+            JSONObject operator = replayMode ? replayOperator :
+                new JSONObject();
             for (Map.Entry<String,?> e : prefs.getAll().entrySet()) {
+                if (replayMode) break;
                 if (e.getKey().startsWith("note:") ||
                         e.getKey().startsWith("link:"))
                     operator.put(e.getKey(), e.getValue());
@@ -388,6 +438,11 @@ public final class AnalystConsole extends LinearLayout {
         JSONArray records = root.getJSONArray("observations");
         if (records.length() > 100000)
             throw new JSONException("Capture exceeds 100000 observations");
+        String sourcePath = root.getString("path");
+        if (!sourcePath.equals("ANDROID") &&
+                !sourcePath.equals("SYNTHETIC / DEMO SCENE"))
+            throw new JSONException("Unsupported capture provenance");
+        JSONObject nextOperator = root.optJSONObject("operator");
         Map<String,DeviceState> next = new LinkedHashMap<>();
         for (int i=0; i<records.length(); i++) {
             JSONObject j = records.getJSONObject(i);
@@ -398,7 +453,13 @@ public final class AnalystConsole extends LinearLayout {
                 j.getLong("receivedMs"), j.getLong("bootId"),
                 j.getString("details"), j.getString("rawHex"));
             if (!next.containsKey(o.key)) next.put(o.key, new DeviceState(o));
-            else next.get(o.key).accept(o);
+            else {
+                DeviceState d = next.get(o.key);
+                if (d.count >= 360)
+                    throw new JSONException("More than 360 samples per identity");
+                if (!d.accept(o))
+                    throw new JSONException("Duplicate/out-of-order observation");
+            }
         }
         StringBuilder diff = new StringBuilder("Capture diff / latest fields\n");
         for (String key : next.keySet()) {
@@ -412,8 +473,10 @@ public final class AnalystConsole extends LinearLayout {
         }
         comparison = diff.toString();
         replay.clear(); replay.putAll(next); replayMode = true;
+        importedPath = sourcePath;
+        replayOperator = nextOperator == null ? new JSONObject() : nextOperator;
         selected.clear(); focus = "";
-        // Imported operator assertions remain file content, not trusted facts.
+        // Imported assertions stay in replay, isolated from live operator facts.
         refresh();
     }
 
@@ -461,7 +524,7 @@ public final class AnalystConsole extends LinearLayout {
             Observation o = rows.get(i).latest;
             t.setMaxLines(2); t.setSingleLine(false);
             t.setPadding(8, 0, 8, 0);
-            t.setHeight(Ui.dp(host, 44));
+            t.setHeight(Ui.dp(host, 40));
             t.setText((selected.contains(o.key) ? "✓ " : "  ")
                 + (watches.contains(o.key) ? "★ " : "")
                 + (o.name.isEmpty() ? "[unnamed]" : o.name)
@@ -479,6 +542,39 @@ public final class AnalystConsole extends LinearLayout {
         private final Paint paint = new Paint(3);
         Spectrum(Context c) { super(c); }
         protected void onDraw(Canvas c) {
+            if (drawerMode.equals("Occupancy")) {
+                TreeSet<Integer> frequencies = new TreeSet<>();
+                long end = 0;
+                for (DeviceState d : data().values()) {
+                    if (d.latest.frequency>0) frequencies.add(d.latest.frequency);
+                    end=Math.max(end,d.latest.wallMs);
+                }
+                if (frequencies.isEmpty()) return;
+                int row=0;
+                float height=getHeight()/(float)frequencies.size();
+                paint.setTextSize(Ui.dp(host,9));
+                for (int frequency : frequencies) {
+                    int[] bins=new int[30];
+                    for (DeviceState d : data().values())
+                        for (Observation o : d.recent()) {
+                            long age=end-o.wallMs;
+                            if(o.frequency==frequency && age>=0 && age<300000)
+                                bins[29-(int)(age/10000)]++;
+                        }
+                    paint.setColor(Palette.MUTED);
+                    c.drawText(""+frequency,0,(row+1)*height,paint);
+                    float width=(getWidth()-40f)/30;
+                    for(int i=0;i<30;i++) {
+                        paint.setColor(Palette.ACCENT);
+                        paint.setAlpha(bins[i]==0 ? 0 :
+                            Math.min(255,50+bins[i]*25));
+                        c.drawRect(40+i*width,row*height,
+                            40+(i+1)*width-1,(row+1)*height-1,paint);
+                    }
+                    paint.setAlpha(255); row++;
+                }
+                return;
+            }
             int min = Integer.MAX_VALUE, max = 0;
             for (DeviceState d : data().values()) {
                 if (d.latest.frequency == 0) continue;

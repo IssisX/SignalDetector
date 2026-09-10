@@ -187,7 +187,7 @@ public final class MainActivity extends Activity
         title.addView(Ui.text(this, "Signal Hunter", 15,
             Palette.TEXT, true));
         titleRow.addView(title, new LinearLayout.LayoutParams(0, -2, 1));
-        TextView version = Ui.mono(this, "v0.1", 10, Palette.MUTED);
+        TextView version = Ui.mono(this, "v0.2", 10, Palette.MUTED);
         titleRow.addView(version);
         header.addView(titleRow);
         header.addView(Ui.space(this, 2));
