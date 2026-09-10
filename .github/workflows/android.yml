@@ -3,6 +3,9 @@ name: Android APK
 on:
   push:
     branches: [main]
+    paths-ignore:
+      - 'bootstrap/**'
+      - '.github/workflows/bootstrap-signal-hunter.yml'
   workflow_dispatch:
 
 permissions:
