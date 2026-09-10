@@ -1,0 +1,131 @@
+name: Bootstrap Signal Hunter Source
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/bootstrap-signal-hunter.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  SOURCE_SHA256: e57d655ad119cebe38b33270a5e356ce372432fbcaa02f3130c62680e6b3136e
+
+jobs:
+  bootstrap-build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout SignalDetector
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Recover exact verified source archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone --quiet --depth 1 \
+            --branch build/signal-hunter-20260909 \
+            https://github.com/IssisX/Listen-droid.git /tmp/signal-transfer
+          cat /tmp/signal-transfer/signal-hunter-v2/p{00..16} \
+            > /tmp/SignalHunter-source.b64
+          base64 --decode /tmp/SignalHunter-source.b64 \
+            > /tmp/SignalHunter-v0.1.0-source.zip
+          echo "${SOURCE_SHA256}  /tmp/SignalHunter-v0.1.0-source.zip" \
+            | sha256sum --check --strict
+          rm -rf /tmp/signal-src
+          mkdir -p /tmp/signal-src
+          unzip -q /tmp/SignalHunter-v0.1.0-source.zip -d /tmp/signal-src
+          test -f /tmp/signal-src/SignalHunter/settings.gradle
+
+      - name: Materialize canonical project
+        shell: bash
+        run: |
+          set -euo pipefail
+          rsync -a \
+            --exclude README.md \
+            --exclude VERIFICATION.json \
+            /tmp/signal-src/SignalHunter/ ./
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('app/src/main/java/com/cory/signalhunter/ui/TraceView.java')
+          s = p.read_text()
+          old = '((double) (ms - first) / (last - first))'
+          new = '((float) (ms - first) / (last - first))'
+          if s.count(old) != 1:
+              raise SystemExit('TraceView patch target count != 1')
+          p.write_text(s.replace(old, new))
+          PY
+          grep -Fq '((float) (ms - first) / (last - first))' \
+            app/src/main/java/com/cory/signalhunter/ui/TraceView.java
+          rm .github/workflows/bootstrap-signal-hunter.yml
+
+      - name: Commit canonical source to main
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git diff --cached --check
+          git commit -m 'Add canonical Signal Hunter Android source'
+          git push origin HEAD:main
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android 35 SDK packages
+        shell: bash
+        run: |
+          set -euo pipefail
+          sdkmanager --install \
+            'platform-tools' \
+            'platforms;android-35' \
+            'build-tools;35.0.0'
+          yes | sdkmanager --licenses >/dev/null || true
+
+      - name: Set up Gradle 8.9
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      - name: Run core tests
+        run: bash tools/test-core.sh
+
+      - name: Build APK
+        run: gradle --no-daemon --stacktrace :app:assembleDebug
+
+      - name: Validate APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK='app/build/outputs/apk/debug/app-debug.apk'
+          test -s "$APK"
+          "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging "$APK" \
+            | tee apk-badging.txt
+          grep -q "package: name='com.cory.signalhunter'" apk-badging.txt
+          "$ANDROID_HOME/build-tools/35.0.0/zipalign" -c -v 4 "$APK"
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" \
+            verify --verbose --print-certs "$APK" | tee apk-signature.txt
+          sha256sum "$APK" | tee apk-sha256.txt
+
+      - name: Upload installable APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: SignalHunter-v0.1.0-debug-APK
+          path: |
+            app/build/outputs/apk/debug/app-debug.apk
+            apk-badging.txt
+            apk-signature.txt
+            apk-sha256.txt
+          if-no-files-found: error
+          retention-days: 30
